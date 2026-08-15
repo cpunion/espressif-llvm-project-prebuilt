@@ -1,0 +1,50 @@
+From: LLGo project <llgo@xgo.dev>
+Subject: [PATCH] Xtensa: accept schedule regions
+
+GNU as accepts these Tensilica compatibility directives but deliberately
+ignores them. Espressif LLVM 19 did the same. Preserve that behavior so the
+LLVM 21 assembler can compile Espressif's Xtensa newlib assembly sources.
+
+---
+ llvm/lib/Target/Xtensa/AsmParser/XtensaAsmParser.cpp | 8 ++++++--
+ llvm/test/MC/Xtensa/directive-region.s              | 2 ++
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/llvm/lib/Target/Xtensa/AsmParser/XtensaAsmParser.cpp b/llvm/lib/Target/Xtensa/AsmParser/XtensaAsmParser.cpp
+--- a/llvm/lib/Target/Xtensa/AsmParser/XtensaAsmParser.cpp
++++ b/llvm/lib/Target/Xtensa/AsmParser/XtensaAsmParser.cpp
+@@ -40,7 +40,7 @@ class XtensaAsmParser : public MCTargetAsmParser {
+ 
+   // Xtensa GNU assembler supports region definitions using
+-  // .begin and .end directives. Currently only .literal_prefix regions are
+-  // supported.
++  // .begin and .end directives. Literal-prefix regions are implemented;
++  // schedule regions are accepted and ignored for GNU as compatibility.
+   struct RegionInfo {
+   public:
+     SMLoc Loc;
+@@ -1075,6 +1076,10 @@ bool XtensaAsmParser::parseBeginDirective(SMLoc L) {
+     StringRef LiteralPrefixName = SE->getSymbol().getName();
+     TS.setLiteralSectionPrefix(LiteralPrefixName);
+     RegionInProgress.emplace_back(BeginLoc, RegionDirectiveName, LiteralPrefixName);
++  } else if (RegionDirectiveName == "schedule") {
++    // Behave like GNU as: this directive is accepted for compatibility with
++    // Tensilica's assembler, but has no effect.
++    RegionInProgress.emplace_back(BeginLoc, RegionDirectiveName);
+   } else {
+     return Error(BeginLoc, "unsupported region directive");
+   }
+diff --git a/llvm/test/MC/Xtensa/directive-region.s b/llvm/test/MC/Xtensa/directive-region.s
+--- a/llvm/test/MC/Xtensa/directive-region.s
++++ b/llvm/test/MC/Xtensa/directive-region.s
+@@ -3,6 +3,8 @@
+ # RUN:   | FileCheck %s
+ 
+ 	.text
++    .begin schedule
++    .end schedule
+     .begin literal_prefix .ExceptionVector
+ 	.literal_position
+ 	.literal .LCPI0_0, 305419896
+-- 
+2.50.1

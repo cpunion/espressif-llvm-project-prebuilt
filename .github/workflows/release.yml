@@ -12,6 +12,7 @@ on:
     paths:
       - 'release.sh'
       - 'toolchain.env'
+      - 'patches/**'
       - '.github/workflows/release.yml'
       - '**.md'
   workflow_dispatch:

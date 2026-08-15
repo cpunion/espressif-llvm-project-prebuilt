@@ -18,6 +18,7 @@ LLVM_REF="${LLVM_REF:-$ESP_LLVM_SOURCE_REF}"
 LLVM_EXPECTED_VERSION="${LLVM_EXPECTED_VERSION:-$ESP_LLVM_EXPECTED_VERSION}"
 LLVM_EXPECTED_MAJOR="${LLVM_EXPECTED_VERSION%%.*}"
 LLVM_SOURCE_REVISION=""
+LLVM_SOURCE_PATCH_SHA256=""
 
 # Detect host system
 if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]] || [[ -n "${WINDIR:-}" ]]; then
@@ -74,6 +75,32 @@ download_llvm_source() {
         echo "LLVM project directory already contains $LLVM_REF."
     fi
     LLVM_SOURCE_REVISION="$(git -C "$LLVM_PROJECTDIR" rev-parse HEAD)"
+
+    local patch_path
+    local patch_files=()
+    for patch_path in $ESP_LLVM_PATCHES; do
+        local absolute_patch="$SCRIPT_DIR/$patch_path"
+        if [[ ! -f "$absolute_patch" ]]; then
+            echo "Error: LLVM source patch not found: $patch_path" >&2
+            return 1
+        fi
+        if git -C "$LLVM_PROJECTDIR" apply --check "$absolute_patch" 2>/dev/null; then
+            echo "Applying LLVM source patch: $patch_path"
+            git -C "$LLVM_PROJECTDIR" apply "$absolute_patch"
+        elif git -C "$LLVM_PROJECTDIR" apply --reverse --check "$absolute_patch" 2>/dev/null; then
+            echo "LLVM source patch is already applied: $patch_path"
+        else
+            echo "Error: LLVM source patch does not apply cleanly: $patch_path" >&2
+            return 1
+        fi
+        patch_files+=("$absolute_patch")
+    done
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        LLVM_SOURCE_PATCH_SHA256="$(cat "${patch_files[@]}" | sha256sum | cut -d' ' -f1)"
+    else
+        LLVM_SOURCE_PATCH_SHA256="$(cat "${patch_files[@]}" | shasum -a 256 | cut -d' ' -f1)"
+    fi
 }
 
 # Base CMake arguments - common to all platforms
@@ -238,6 +265,8 @@ payload_version=$VERSION_STRING
 llvm_source_repository=https://github.com/espressif/llvm-project
 llvm_source_ref=$LLVM_REF
 llvm_source_revision=$LLVM_SOURCE_REVISION
+llvm_source_patches=$ESP_LLVM_PATCHES
+llvm_source_patch_sha256=$LLVM_SOURCE_PATCH_SHA256
 llvm_expected_version=$LLVM_EXPECTED_VERSION
 llvm_targets=X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly;Xtensa
 host_target=$target
@@ -270,7 +299,7 @@ EOF
 
 validate_release() {
     local release_dir="$1"
-    local actual_version targets tool target_name
+    local actual_version targets tool target_name test_dir
 
     for tool in clang clang++ ld.lld lld llvm-ar llvm-config llvm-nm llc opt; do
         if [[ ! -x "$release_dir/bin/$tool" ]]; then
@@ -305,6 +334,23 @@ validate_release() {
         echo "Error: libLLVM-$LLVM_EXPECTED_MAJOR shared library is missing" >&2
         return 1
     fi
+
+    test_dir="$(mktemp -d)"
+    cat > "$test_dir/schedule-region.S" << 'EOF'
+        .text
+        .begin schedule
+        .global schedule_region_smoke_test
+schedule_region_smoke_test:
+        ret
+        .end schedule
+EOF
+    if ! "$release_dir/bin/clang" --target=xtensa -c \
+        "$test_dir/schedule-region.S" -o "$test_dir/schedule-region.o"; then
+        rm -rf "$test_dir"
+        echo "Error: Xtensa assembler does not accept schedule regions" >&2
+        return 1
+    fi
+    rm -rf "$test_dir"
 
     echo "Validated LLVM $actual_version payload with targets: $targets"
 }
