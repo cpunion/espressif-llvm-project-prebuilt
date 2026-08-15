@@ -3,31 +3,34 @@
 # Usage: ./release.sh <platform>
 # Based on the working Makefile and build script
 
-set -e
+set -euo pipefail
 
 # Configuration
-TAG="${TAG:-19.1.2_20250312}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/toolchain.env"
+
+TAG="${TAG:-$ESP_LLVM_PAYLOAD_VERSION}"
 VERSION_STRING="$TAG"
 LLVM_PROJECTDIR="${LLVM_PROJECTDIR:-llvm-project}"
 BUILD_DIR_BASE="${BUILD_DIR_BASE:-build}"
-
-# Extract version from TAG to determine branch name
-LLVM_VERSION_FROM_TAG="${TAG%%_*}"
-LLVM_BRANCH="xtensa_release_${LLVM_VERSION_FROM_TAG}"
+LLVM_REF="${LLVM_REF:-$ESP_LLVM_SOURCE_REF}"
+LLVM_EXPECTED_VERSION="${LLVM_EXPECTED_VERSION:-$ESP_LLVM_EXPECTED_VERSION}"
+LLVM_EXPECTED_MAJOR="${LLVM_EXPECTED_VERSION%%.*}"
+LLVM_SOURCE_REVISION=""
 
 # Detect host system
-if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]] || [[ -n "$WINDIR" ]]; then
+if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]] || [[ -n "${WINDIR:-}" ]]; then
     HOST_OS="Windows_NT"
-    EXE=".exe"
 else
     HOST_OS="$(uname -s)"
-    EXE=""
 fi
 
 # Set macOS SDK root if on macOS
 if [[ "$HOST_OS" == "Darwin" ]]; then
-    if [[ -z "$SDKROOT" ]]; then
-        export SDKROOT="$(xcrun --show-sdk-path)"
+    if [[ -z "${SDKROOT:-}" ]]; then
+        detected_sdkroot="$(xcrun --show-sdk-path)"
+        export SDKROOT="$detected_sdkroot"
         echo "Setting SDKROOT to: $SDKROOT"
     fi
 fi
@@ -47,7 +50,9 @@ show_usage() {
     done
     echo ""
     echo "Environment variables:"
-    echo "  TAG              - Version tag (default: $TAG)"
+    echo "  TAG              - Payload version (default: $TAG)"
+    echo "  LLVM_REF         - Exact Espressif LLVM tag/ref (default: $LLVM_REF)"
+    echo "  LLVM_EXPECTED_VERSION - llvm-config version prefix (default: $LLVM_EXPECTED_VERSION)"
     echo "  LLVM_PROJECTDIR  - LLVM source directory (default: $LLVM_PROJECTDIR)"
     echo "  BUILD_DIR_BASE   - Build directory base (default: $BUILD_DIR_BASE)"
     echo ""
@@ -56,11 +61,19 @@ show_usage() {
 # Function to download LLVM source
 download_llvm_source() {
     if [[ ! -d "$LLVM_PROJECTDIR" ]]; then
-        echo "Cloning LLVM project branch $LLVM_BRANCH..."
-        git clone -b "$LLVM_BRANCH" --depth=1 https://github.com/espressif/llvm-project "$LLVM_PROJECTDIR"
+        echo "Cloning LLVM project ref $LLVM_REF..."
+        git clone --branch "$LLVM_REF" --depth=1 https://github.com/espressif/llvm-project "$LLVM_PROJECTDIR"
     else
-        echo "LLVM project directory already exists."
+        local current_ref
+        current_ref="$(git -C "$LLVM_PROJECTDIR" describe --tags --exact-match 2>/dev/null || true)"
+        if [[ "$current_ref" != "$LLVM_REF" ]]; then
+            echo "Error: $LLVM_PROJECTDIR is at '${current_ref:-an untagged revision}', expected $LLVM_REF" >&2
+            echo "Use a fresh LLVM_PROJECTDIR instead of silently reusing different LLVM sources." >&2
+            return 1
+        fi
+        echo "LLVM project directory already contains $LLVM_REF."
     fi
+    LLVM_SOURCE_REVISION="$(git -C "$LLVM_PROJECTDIR" rev-parse HEAD)"
 }
 
 # Base CMake arguments - common to all platforms
@@ -220,6 +233,18 @@ create_release_structure() {
         return 1
     fi
 
+    cat > "$release_dir/LLGO-LLVM-MANIFEST.txt" << EOF
+payload_version=$VERSION_STRING
+llvm_source_repository=https://github.com/espressif/llvm-project
+llvm_source_ref=$LLVM_REF
+llvm_source_revision=$LLVM_SOURCE_REVISION
+llvm_expected_version=$LLVM_EXPECTED_VERSION
+llvm_targets=X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly;Xtensa
+host_target=$target
+EOF
+
+    validate_release "$release_dir"
+
     echo "Release directory created: $release_dir"
     echo "Contents:"
     ls -la "$release_dir"
@@ -231,8 +256,57 @@ create_release_structure() {
     tar -cJf "../clang-esp-${VERSION_STRING}-${target}.tar.xz" esp-clang/
     cd - > /dev/null
 
-    echo "Tarball created: dist/clang-esp-${VERSION_STRING}-${target}.tar.xz"
-    echo "Package size: $(du -h "dist/clang-esp-${VERSION_STRING}-${target}.tar.xz" | cut -f1)"
+    local archive="dist/clang-esp-${VERSION_STRING}-${target}.tar.xz"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$archive" > "$archive.sha256"
+    else
+        shasum -a 256 "$archive" > "$archive.sha256"
+    fi
+
+    echo "Tarball created: $archive"
+    echo "Checksum created: $archive.sha256"
+    echo "Package size: $(du -h "$archive" | cut -f1)"
+}
+
+validate_release() {
+    local release_dir="$1"
+    local actual_version targets tool target_name
+
+    for tool in clang clang++ ld.lld lld llvm-ar llvm-config llvm-nm llc opt; do
+        if [[ ! -x "$release_dir/bin/$tool" ]]; then
+            echo "Error: required tool $tool is missing from $release_dir/bin" >&2
+            return 1
+        fi
+    done
+
+    actual_version="$("$release_dir/bin/llvm-config" --version)"
+    if [[ "$actual_version" != "$LLVM_EXPECTED_VERSION"* ]]; then
+        echo "Error: llvm-config reports $actual_version, expected $LLVM_EXPECTED_VERSION.x" >&2
+        return 1
+    fi
+
+    targets="$("$release_dir/bin/llvm-config" --targets-built)"
+    for target_name in X86 ARM AArch64 AVR Mips RISCV WebAssembly Xtensa; do
+        if [[ " $targets " != *" $target_name "* ]]; then
+            echo "Error: required LLVM target $target_name is missing: $targets" >&2
+            return 1
+        fi
+    done
+
+    [[ -f "$release_dir/include/llvm-c/Core.h" ]] || {
+        echo "Error: llvm-c/Core.h is missing" >&2
+        return 1
+    }
+    [[ -f "$release_dir/lib/cmake/llvm/LLVMConfig.cmake" ]] || {
+        echo "Error: LLVMConfig.cmake is missing" >&2
+        return 1
+    }
+    if ! find "$release_dir/lib" -maxdepth 1 -name "libLLVM-$LLVM_EXPECTED_MAJOR.*" -print -quit | grep -q .; then
+        echo "Error: libLLVM-$LLVM_EXPECTED_MAJOR shared library is missing" >&2
+        return 1
+    fi
+
+    echo "Validated LLVM $actual_version payload with targets: $targets"
 }
 
 # Main build function (native builds only)
@@ -242,7 +316,8 @@ build_platform() {
     echo "Building LLVM for platform: $target"
     echo "Version: $VERSION_STRING"
     echo "Host OS: $HOST_OS"
-    echo "LLVM Branch: $LLVM_BRANCH"
+    echo "LLVM Source Ref: $LLVM_REF"
+    echo "LLVM Source Revision: $LLVM_SOURCE_REVISION"
     echo ""
 
     # Create build and install directories
@@ -255,31 +330,35 @@ build_platform() {
     # Set up build environment
     setup_build_env "$target"
 
-    # Prepare CMake arguments
-    local cmake_args_file=$(mktemp)
-    {
+    # Prepare CMake arguments without flattening values through shell word
+    # splitting (SDK paths may contain spaces).
+    local cmake_args=()
+    while IFS= read -r arg; do
+        cmake_args+=("$arg")
+    done < <({
         get_base_cmake_args
         get_platform_cmake_args "$target"
         echo "-DCMAKE_INSTALL_PREFIX=$install_dir"
-    } > "$cmake_args_file"
+    })
 
     echo "CMake configuration:"
-    cat "$cmake_args_file"
+    printf '  %s\n' "${cmake_args[@]}"
     echo ""
 
     # Configure
     echo "Configuring build for $target..."
     cd "$build_dir"
-    cmake "../../$LLVM_PROJECTDIR/llvm" $(cat "$cmake_args_file" | tr '\n' ' ')
+    cmake "../../$LLVM_PROJECTDIR/llvm" "${cmake_args[@]}"
 
     # Build
     echo "Building $target..."
-    local cores=$(get_cpu_cores)
+    local cores
+    cores="$(get_cpu_cores)"
     echo "Using $cores CPU cores for build"
 
     # Build only essential tools to significantly reduce build time
     # LLGo currently only requires libLLVM.dylib for dynamic libraries, and this dylib will be built with the following targets
-    ninja -j"$cores" clang llvm-config llvm-ar llvm-nm lld
+    ninja -j"$cores" clang llvm-config llvm-ar llvm-nm llc opt lld
 
     # Install
     echo "Installing $target..."
@@ -287,9 +366,6 @@ build_platform() {
 
     # Return to original directory
     cd - > /dev/null
-
-    # Clean up temporary file
-    rm -f "$cmake_args_file"
 
     # Create release directory structure
     create_release_structure "$target" "$install_dir"
@@ -349,5 +425,8 @@ main() {
     build_platform "$target"
 }
 
-# Run main function
-main "$@"
+# Run main function when executed, while allowing validation helpers to be
+# sourced by local tests and CI diagnostics.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
