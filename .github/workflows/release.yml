@@ -46,6 +46,9 @@ jobs:
       version_string: ${{ steps.vars.outputs.version_string }}
 
     steps:
+    - name: Checkout payload contract
+      uses: actions/checkout@v4
+
     - name: Determine tag and version
       id: vars
       run: |
