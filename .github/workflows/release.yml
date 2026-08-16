@@ -108,8 +108,8 @@ jobs:
 
           # macOS x86_64 build
           - target: x86_64-apple-darwin
-            os: macos-13
-            runner: macos-13
+            os: macos-15-intel
+            runner: macos-15-intel
 
           # macOS ARM64 build
           - target: aarch64-apple-darwin
@@ -159,7 +159,7 @@ jobs:
         sudo apt-get install -y build-essential cmake ninja-build
 
     - name: Install build dependencies (macOS)
-      if: matrix.os == 'macos-13' || matrix.os == 'macos-14'
+      if: startsWith(matrix.os, 'macos-')
       run: |
         brew uninstall cmake || true
         brew install cmake ninja
