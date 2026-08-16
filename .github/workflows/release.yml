@@ -11,6 +11,8 @@ on:
       - reopened
     paths:
       - 'release.sh'
+      - 'toolchain.env'
+      - 'patches/**'
       - '.github/workflows/release.yml'
       - '**.md'
   workflow_dispatch:
@@ -39,39 +41,49 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.vars.outputs.tag }}
+      llvm_ref: ${{ steps.vars.outputs.llvm_ref }}
+      llvm_expected_version: ${{ steps.vars.outputs.llvm_expected_version }}
       upload: ${{ steps.vars.outputs.upload }}
       version_string: ${{ steps.vars.outputs.version_string }}
 
     steps:
+    - name: Checkout payload contract
+      uses: actions/checkout@v4
+
     - name: Determine tag and version
       id: vars
       run: |
+        source toolchain.env
         if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
           # Tag push - create release
           tag="${{ github.ref_name }}"
           upload="true"
         elif [ "${{ github.event_name }}" = "pull_request" ]; then
-          # PR build - no release, use PR number
-          tag="19.1.2_20250225"
+          # PR build - no release, use the checked-in payload contract.
+          tag="$ESP_LLVM_PAYLOAD_VERSION"
           upload="false"
         elif [ -n "${{ inputs.tag }}" ]; then
           # Manual trigger with tag
           tag="${{ inputs.tag }}"
           upload="${{ inputs.upload }}"
         else
-          echo "No tag specified and not a tag push event"
-          exit 1
+          tag="$ESP_LLVM_PAYLOAD_VERSION"
+          upload="${{ inputs.upload }}"
         fi
 
         version_string="esp-$tag"
 
         echo "tag=$tag" >> $GITHUB_OUTPUT
+        echo "llvm_ref=$ESP_LLVM_SOURCE_REF" >> $GITHUB_OUTPUT
+        echo "llvm_expected_version=$ESP_LLVM_EXPECTED_VERSION" >> $GITHUB_OUTPUT
         echo "upload=$upload" >> $GITHUB_OUTPUT
         echo "version_string=$version_string" >> $GITHUB_OUTPUT
 
         echo "Build configuration:"
         echo "  Event: ${{ github.event_name }}"
         echo "  Tag: $tag"
+        echo "  LLVM source ref: $ESP_LLVM_SOURCE_REF"
+        echo "  Expected LLVM version: $ESP_LLVM_EXPECTED_VERSION"
         echo "  Version String: $version_string"
         echo "  Upload: $upload"
 
@@ -96,8 +108,8 @@ jobs:
 
           # macOS x86_64 build
           - target: x86_64-apple-darwin
-            os: macos-13
-            runner: macos-13
+            os: macos-15-intel
+            runner: macos-15-intel
 
           # macOS ARM64 build
           - target: aarch64-apple-darwin
@@ -147,7 +159,7 @@ jobs:
         sudo apt-get install -y build-essential cmake ninja-build
 
     - name: Install build dependencies (macOS)
-      if: matrix.os == 'macos-13' || matrix.os == 'macos-14'
+      if: startsWith(matrix.os, 'macos-')
       run: |
         brew uninstall cmake || true
         brew install cmake ninja
@@ -156,6 +168,8 @@ jobs:
       shell: bash
       env:
         TAG: ${{ needs.prepare.outputs.tag }}
+        LLVM_REF: ${{ needs.prepare.outputs.llvm_ref }}
+        LLVM_EXPECTED_VERSION: ${{ needs.prepare.outputs.llvm_expected_version }}
       run: ./release.sh ${{ matrix.target }}
 
     - name: List generated packages
@@ -170,6 +184,7 @@ jobs:
         name: ${{ matrix.target }}-esp-clang-packages
         path: |
           dist/*.tar.xz
+          dist/*.sha256
         # Shorter retention for PR builds, longer for releases
         retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
 
@@ -188,8 +203,9 @@ jobs:
     - name: Prepare release files
       run: |
         find artifacts -name "*.tar.xz" -exec mv {} . \;
+        sha256sum *.tar.xz > "clang-esp-${{ needs.prepare.outputs.tag }}-checksum.sha256"
         echo "Release files:"
-        ls -la *.tar.xz
+        ls -la *.tar.xz *.sha256
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
@@ -198,5 +214,7 @@ jobs:
         name: "Espressif LLVM ${{ needs.prepare.outputs.tag }}"
         draft: false
         prerelease: false
-        files: "*.tar.xz"
+        files: |
+          *.tar.xz
+          *.sha256
         token: ${{ secrets.GITHUB_TOKEN }}
