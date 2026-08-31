@@ -10,6 +10,10 @@ TAG="${TAG:-19.1.2_20250312}"
 VERSION_STRING="$TAG"
 LLVM_PROJECTDIR="${LLVM_PROJECTDIR:-llvm-project}"
 BUILD_DIR_BASE="${BUILD_DIR_BASE:-build}"
+# Pin the tested Espressif LLVM 19 source revision. The release branch remains
+# useful documentation, but it is mutable and therefore cannot define a
+# reproducible compiler payload on its own.
+LLVM_REVISION="${LLVM_REVISION:-510a078c1ad4aee4460818bcb38ff0ba3fbf6a83}"
 
 # Extract version from TAG to determine branch name
 LLVM_VERSION_FROM_TAG="${TAG%%_*}"
@@ -57,8 +61,11 @@ show_usage() {
 # Function to download LLVM source
 download_llvm_source() {
     if [[ ! -d "$LLVM_PROJECTDIR" ]]; then
-        echo "Cloning LLVM project branch $LLVM_BRANCH..."
-        git clone -b "$LLVM_BRANCH" --depth=1 https://github.com/espressif/llvm-project "$LLVM_PROJECTDIR"
+        echo "Fetching LLVM project revision $LLVM_REVISION from $LLVM_BRANCH..."
+        git init "$LLVM_PROJECTDIR"
+        git -C "$LLVM_PROJECTDIR" remote add origin https://github.com/espressif/llvm-project
+        git -C "$LLVM_PROJECTDIR" fetch --depth=1 origin "$LLVM_REVISION"
+        git -C "$LLVM_PROJECTDIR" checkout --detach FETCH_HEAD
     else
         echo "LLVM project directory already exists."
     fi
