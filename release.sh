@@ -291,6 +291,8 @@ create_release_structure() {
         cp -r "$LLVM_MINGW_ROOT/$target" "$release_dir/"
         mkdir -p "$release_dir/include"
         cp -r "$LLVM_MINGW_ROOT/include/c++" "$release_dir/include/"
+        cp "$LLVM_PROJECTDIR/llvm/LICENSE.TXT" "$release_dir/LICENSE.TXT"
+        cp "$LLVM_MINGW_ROOT/LICENSE.TXT" "$release_dir/LLVM-MINGW-LICENSE.TXT"
         validate_release "$target" "$release_dir"
     fi
 
@@ -380,6 +382,12 @@ validate_release() {
             echo "Error: the native MinGW/UCRT sysroot is missing windows.h" >&2
             return 1
         fi
+        for path in LICENSE.TXT LLVM-MINGW-LICENSE.TXT; do
+            if [[ ! -f "$release_dir/$path" ]]; then
+                echo "Error: required toolchain license is missing: $path" >&2
+                return 1
+            fi
+        done
     fi
 
     echo "Validated LLVM $actual_version payload with targets: $targets"
