@@ -177,6 +177,9 @@ EOF
 # no MSYS or Cygwin ABI is introduced.
 get_windows_cmake_args() {
     local bootstrap_root="${LLVM_MINGW_ROOT//\\//}"
+    # clang-shlib uses LLVM_ENABLE_PIC as its cross-platform shared-library
+    # gate even though PE/COFF does not need Unix-style position-independent
+    # code. Keep it enabled so clang-cpp and its import library are generated.
     cat << EOF
 -DCMAKE_C_COMPILER=$bootstrap_root/bin/clang.exe
 -DCMAKE_CXX_COMPILER=$bootstrap_root/bin/clang++.exe
@@ -187,7 +190,7 @@ get_windows_cmake_args() {
 -DLLVM_BUILD_LLVM_DYLIB=ON
 -DLLVM_BUILD_LLVM_C_DYLIB=OFF
 -DLLVM_ENABLE_LIBCXX=ON
--DLLVM_ENABLE_PIC=OFF
+-DLLVM_ENABLE_PIC=ON
 -DLLVM_ENABLE_RUNTIMES=
 -DLLVM_BUILD_EXTERNAL_COMPILER_RT=OFF
 -DLLVM_USE_LINKER=lld
@@ -436,15 +439,6 @@ build_platform() {
     echo "Building $target..."
     local cores=$(get_cpu_cores)
     echo "Using $cores CPU cores for build"
-
-    # Espressif LLVM's MinGW CMake graph links clang with -lclang-cpp without
-    # recording clang-cpp as a build dependency. Build it first so a parallel
-    # native Windows build cannot try to link clang before its import library
-    # exists. Keep the shared layout used by the other release hosts rather
-    # than silently producing a larger, statically linked Windows driver.
-    if [[ "$HOST_OS" == "Windows_NT" ]]; then
-        ninja -j"$cores" clang-cpp
-    fi
 
     # Keep the established non-Windows target set unchanged. Windows release
     # validation additionally needs llvm-readobj for PE architecture/import
