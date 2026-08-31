@@ -10,10 +10,7 @@ TAG="${TAG:-19.1.2_20250312}"
 VERSION_STRING="$TAG"
 LLVM_PROJECTDIR="${LLVM_PROJECTDIR:-llvm-project}"
 BUILD_DIR_BASE="${BUILD_DIR_BASE:-build}"
-# Pin the tested Espressif LLVM 19 source revision. The release branch remains
-# useful documentation, but it is mutable and therefore cannot define a
-# reproducible compiler payload on its own.
-LLVM_REVISION="${LLVM_REVISION:-510a078c1ad4aee4460818bcb38ff0ba3fbf6a83}"
+LLVM_REVISION="${LLVM_REVISION:-}"
 
 # Extract version from TAG to determine branch name
 LLVM_VERSION_FROM_TAG="${TAG%%_*}"
@@ -61,11 +58,16 @@ show_usage() {
 # Function to download LLVM source
 download_llvm_source() {
     if [[ ! -d "$LLVM_PROJECTDIR" ]]; then
-        echo "Fetching LLVM project revision $LLVM_REVISION from $LLVM_BRANCH..."
-        git init "$LLVM_PROJECTDIR"
-        git -C "$LLVM_PROJECTDIR" remote add origin https://github.com/espressif/llvm-project
-        git -C "$LLVM_PROJECTDIR" fetch --depth=1 origin "$LLVM_REVISION"
-        git -C "$LLVM_PROJECTDIR" checkout --detach FETCH_HEAD
+        if [[ -n "$LLVM_REVISION" ]]; then
+            echo "Fetching LLVM project revision $LLVM_REVISION from $LLVM_BRANCH..."
+            git init "$LLVM_PROJECTDIR"
+            git -C "$LLVM_PROJECTDIR" remote add origin https://github.com/espressif/llvm-project
+            git -C "$LLVM_PROJECTDIR" fetch --depth=1 origin "$LLVM_REVISION"
+            git -C "$LLVM_PROJECTDIR" checkout --detach FETCH_HEAD
+        else
+            echo "Cloning LLVM project branch $LLVM_BRANCH..."
+            git clone -b "$LLVM_BRANCH" --depth=1 https://github.com/espressif/llvm-project "$LLVM_PROJECTDIR"
+        fi
     else
         echo "LLVM project directory already exists."
     fi
@@ -328,7 +330,7 @@ resolve_release_tool() {
 validate_release() {
     local target="$1"
     local release_dir="$2"
-    local tool path actual_version targets target_name
+    local tool actual_version targets target_name
 
     for tool in clang clang++ ld.lld lld llvm-ar llvm-config llvm-nm llvm-readobj; do
         if ! resolve_release_tool "$release_dir" "$tool" >/dev/null; then
@@ -435,9 +437,22 @@ build_platform() {
     local cores=$(get_cpu_cores)
     echo "Using $cores CPU cores for build"
 
-    # Build only essential tools to significantly reduce build time
-    # LLGo currently only requires libLLVM.dylib for dynamic libraries, and this dylib will be built with the following targets
-    ninja -j"$cores" clang llvm-config llvm-ar llvm-nm llvm-readobj lld
+    # Espressif LLVM's MinGW CMake graph links clang with -lclang-cpp without
+    # recording clang-cpp as a build dependency. Build it first so a parallel
+    # native Windows build cannot try to link clang before its import library
+    # exists. Keep the shared layout used by the other release hosts rather
+    # than silently producing a larger, statically linked Windows driver.
+    if [[ "$HOST_OS" == "Windows_NT" ]]; then
+        ninja -j"$cores" clang-cpp
+    fi
+
+    # Keep the established non-Windows target set unchanged. Windows release
+    # validation additionally needs llvm-readobj for PE architecture/import
+    # inspection.
+    ninja -j"$cores" clang llvm-config llvm-ar llvm-nm lld
+    if [[ "$HOST_OS" == "Windows_NT" ]]; then
+        ninja -j"$cores" llvm-readobj
+    fi
 
     # Install
     echo "Installing $target..."

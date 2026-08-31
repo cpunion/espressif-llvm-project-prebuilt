@@ -52,7 +52,7 @@ jobs:
           upload="true"
         elif [ "${{ github.event_name }}" = "pull_request" ]; then
           # PR build - no release, use PR number
-          tag="19.1.2_20250905-4"
+          tag="19.1.2_20250225"
           upload="false"
         elif [ -n "${{ inputs.tag }}" ]; then
           # Manual trigger with tag
@@ -82,6 +82,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux x86_64 build
+          - target: x86_64-linux-gnu
+            os: ubuntu-22.04
+            runner: ubuntu-22.04
+            container: ubuntu:20.04
+
+          # Linux ARM64 build
+          - target: aarch64-linux-gnu
+            os: ubuntu-22.04-arm
+            runner: ubuntu-22.04-arm
+            container: ubuntu:20.04
+
+          # macOS x86_64 build
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            runner: macos-15-intel
+
+          # macOS ARM64 build
+          - target: aarch64-apple-darwin
+            os: macos-14
+            runner: macos-14
+
           # Native Windows UCRT payloads. The x86 build runs under WoW64;
           # each archive still contains architecture-native LLVM tools.
           - target: x86_64-w64-mingw32
@@ -89,16 +111,19 @@ jobs:
             runner: windows-2022
             bootstrap_arch: x86_64
             bootstrap_sha256: 9395d95c089611e6cd728c9a07219ffc5ac706e0c719833a2f7e64a706a81541
+            llvm_revision: 510a078c1ad4aee4460818bcb38ff0ba3fbf6a83
           - target: i686-w64-mingw32
             os: windows-2022
             runner: windows-2022
             bootstrap_arch: i686
             bootstrap_sha256: 7fec57627754436496b4b2db943c366decc8a629dbb1d5c9a73164c08667ad70
+            llvm_revision: 510a078c1ad4aee4460818bcb38ff0ba3fbf6a83
           - target: aarch64-w64-mingw32
             os: windows-11-arm
             runner: windows-11-arm
             bootstrap_arch: aarch64
             bootstrap_sha256: 2e00fa1b17f46aef58d7bbdac65c7ceec716f39bc59e0c424b03d4083648c9dd
+            llvm_revision: 510a078c1ad4aee4460818bcb38ff0ba3fbf6a83
 
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -143,7 +168,7 @@ jobs:
         sudo apt-get install -y build-essential cmake ninja-build
 
     - name: Install build dependencies (macOS)
-      if: matrix.os == 'macos-13' || matrix.os == 'macos-14'
+      if: matrix.os == 'macos-15-intel' || matrix.os == 'macos-14'
       run: |
         brew uninstall cmake || true
         brew install cmake ninja
@@ -189,6 +214,7 @@ jobs:
       shell: bash
       env:
         TAG: ${{ needs.prepare.outputs.tag }}
+        LLVM_REVISION: ${{ matrix.llvm_revision }}
       run: ./release.sh ${{ matrix.target }}
 
     - name: List generated packages
