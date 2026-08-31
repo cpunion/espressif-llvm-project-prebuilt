@@ -93,7 +93,7 @@ jobs:
             os: windows-2022
             runner: windows-2022
             bootstrap_arch: i686
-            bootstrap_sha256: 18490aa24c9998c8811c7f5f53f9e6c7c05656ce734fe7e083e9f3ef69fb512c
+            bootstrap_sha256: 7fec57627754436496b4b2db943c366decc8a629dbb1d5c9a73164c08667ad70
           - target: aarch64-w64-mingw32
             os: windows-11-arm
             runner: windows-11-arm
