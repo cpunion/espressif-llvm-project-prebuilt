@@ -10,9 +10,11 @@ TAG="${TAG:-19.1.2_20250312}"
 VERSION_STRING="$TAG"
 LLVM_PROJECTDIR="${LLVM_PROJECTDIR:-llvm-project}"
 BUILD_DIR_BASE="${BUILD_DIR_BASE:-build}"
+LLVM_REVISION="${LLVM_REVISION:-}"
 
 # Extract version from TAG to determine branch name
 LLVM_VERSION_FROM_TAG="${TAG%%_*}"
+LLVM_MAJOR="${LLVM_VERSION_FROM_TAG%%.*}"
 LLVM_BRANCH="xtensa_release_${LLVM_VERSION_FROM_TAG}"
 
 # Detect host system
@@ -33,7 +35,7 @@ if [[ "$HOST_OS" == "Darwin" ]]; then
 fi
 
 # Supported build targets (native builds only)
-VALID_TARGETS="aarch64-apple-darwin aarch64-linux-gnu x86_64-apple-darwin x86_64-linux-gnu"
+VALID_TARGETS="aarch64-apple-darwin aarch64-linux-gnu aarch64-w64-mingw32 i686-w64-mingw32 x86_64-apple-darwin x86_64-linux-gnu x86_64-w64-mingw32"
 
 # Function to show usage
 show_usage() {
@@ -56,8 +58,16 @@ show_usage() {
 # Function to download LLVM source
 download_llvm_source() {
     if [[ ! -d "$LLVM_PROJECTDIR" ]]; then
-        echo "Cloning LLVM project branch $LLVM_BRANCH..."
-        git clone -b "$LLVM_BRANCH" --depth=1 https://github.com/espressif/llvm-project "$LLVM_PROJECTDIR"
+        if [[ -n "$LLVM_REVISION" ]]; then
+            echo "Fetching LLVM project revision $LLVM_REVISION from $LLVM_BRANCH..."
+            git init "$LLVM_PROJECTDIR"
+            git -C "$LLVM_PROJECTDIR" remote add origin https://github.com/espressif/llvm-project
+            git -C "$LLVM_PROJECTDIR" fetch --depth=1 origin "$LLVM_REVISION"
+            git -C "$LLVM_PROJECTDIR" checkout --detach FETCH_HEAD
+        else
+            echo "Cloning LLVM project branch $LLVM_BRANCH..."
+            git clone -b "$LLVM_BRANCH" --depth=1 https://github.com/espressif/llvm-project "$LLVM_PROJECTDIR"
+        fi
     else
         echo "LLVM project directory already exists."
     fi
@@ -161,6 +171,33 @@ get_linux_cmake_args() {
 EOF
 }
 
+# Windows payloads are built with an architecture-native llvm-mingw bootstrap.
+# This keeps the resulting clang, LLVM library, and helper tools native to the
+# archive architecture while still using the UCRT and the normal Windows API;
+# no MSYS or Cygwin ABI is introduced.
+get_windows_cmake_args() {
+    local bootstrap_root="${LLVM_MINGW_ROOT//\\//}"
+    # clang-shlib uses LLVM_ENABLE_PIC as its cross-platform shared-library
+    # gate even though PE/COFF does not need Unix-style position-independent
+    # code. Keep it enabled so clang-cpp and its import library are generated.
+    cat << EOF
+-DCMAKE_C_COMPILER=$bootstrap_root/bin/clang.exe
+-DCMAKE_CXX_COMPILER=$bootstrap_root/bin/clang++.exe
+-DCMAKE_AR=$bootstrap_root/bin/llvm-ar.exe
+-DCMAKE_RANLIB=$bootstrap_root/bin/llvm-ranlib.exe
+-DCMAKE_RC_COMPILER=$bootstrap_root/bin/llvm-rc.exe
+-DCMAKE_STRIP=$bootstrap_root/bin/llvm-strip.exe
+-DLLVM_BUILD_LLVM_DYLIB=ON
+-DLLVM_BUILD_LLVM_C_DYLIB=OFF
+-DLLVM_ENABLE_LIBCXX=ON
+-DLLVM_ENABLE_PIC=ON
+-DLLVM_ENABLE_RUNTIMES=
+-DLLVM_BUILD_EXTERNAL_COMPILER_RT=OFF
+-DLLVM_USE_LINKER=lld
+-DCLANG_DEFAULT_CXX_STDLIB=libc++
+EOF
+}
+
 # Function to get platform-specific CMake arguments
 get_platform_cmake_args() {
     local target="$1"
@@ -171,6 +208,9 @@ get_platform_cmake_args() {
             ;;
         *-linux-gnu*)
             get_linux_cmake_args
+            ;;
+        *-w64-mingw32)
+            get_windows_cmake_args
             ;;
         *)
             echo "Unknown target platform: $target" >&2
@@ -220,6 +260,47 @@ create_release_structure() {
         return 1
     fi
 
+    if [[ "$HOST_OS" == "Windows_NT" ]]; then
+        if [[ -z "${LLVM_MINGW_ROOT:-}" ]]; then
+            echo "Error: LLVM_MINGW_ROOT is required for a Windows package" >&2
+            return 1
+        fi
+        # LLVM and clang are linked against llvm-mingw's libc++ runtime. Copy
+        # only their native UCRT dependencies; libwinpthread is deliberately
+        # neither needed nor shipped.
+        for dll in libc++.dll libunwind.dll; do
+            if [[ ! -f "$LLVM_MINGW_ROOT/bin/$dll" ]]; then
+                echo "Error: Windows bootstrap runtime is missing $dll" >&2
+                return 1
+            fi
+            cp "$LLVM_MINGW_ROOT/bin/$dll" "$release_dir/bin/$dll"
+        done
+        # The freshly built Clang resource directory has headers but no
+        # compiler-rt because Windows builds deliberately skip rebuilding the
+        # runtimes. Reuse the matching bootstrap builtins, and retain both the
+        # GNU and MSVC archive spellings: both are COFF archives, while the
+        # driver selects their conventional name from the target ABI.
+        local resource_dir="$release_dir/lib/clang/$LLVM_MAJOR/lib/windows"
+        mkdir -p "$resource_dir"
+        cp "$LLVM_MINGW_ROOT/lib/clang/$LLVM_MAJOR/lib/windows/"libclang_rt.builtins-*.a "$resource_dir/"
+        local builtins_arch
+        for builtins_arch in i386 x86_64 aarch64 arm; do
+            cp "$resource_dir/libclang_rt.builtins-$builtins_arch.a" \
+                "$resource_dir/clang_rt.builtins-$builtins_arch.lib"
+        done
+
+        # Keep the archive usable as a native GNU/MinGW toolchain rather than
+        # shipping a Clang driver with no CRT, Windows SDK imports, or libc++.
+        # Only the archive's native target sysroot is included; other Windows
+        # architectures receive their own independently built package.
+        cp -r "$LLVM_MINGW_ROOT/$target" "$release_dir/"
+        mkdir -p "$release_dir/include"
+        cp -r "$LLVM_MINGW_ROOT/include/c++" "$release_dir/include/"
+        cp "$LLVM_PROJECTDIR/llvm/LICENSE.TXT" "$release_dir/LICENSE.TXT"
+        cp "$LLVM_MINGW_ROOT/LICENSE.TXT" "$release_dir/LLVM-MINGW-LICENSE.TXT"
+        validate_release "$target" "$release_dir"
+    fi
+
     echo "Release directory created: $release_dir"
     echo "Contents:"
     ls -la "$release_dir"
@@ -233,6 +314,88 @@ create_release_structure() {
 
     echo "Tarball created: dist/clang-esp-${VERSION_STRING}-${target}.tar.xz"
     echo "Package size: $(du -h "dist/clang-esp-${VERSION_STRING}-${target}.tar.xz" | cut -f1)"
+}
+
+resolve_release_tool() {
+    local release_dir="$1"
+    local tool="$2"
+    if [[ -x "$release_dir/bin/$tool" ]]; then
+        printf '%s\n' "$release_dir/bin/$tool"
+        return
+    fi
+    if [[ -x "$release_dir/bin/$tool.exe" ]]; then
+        printf '%s\n' "$release_dir/bin/$tool.exe"
+        return
+    fi
+    return 1
+}
+
+validate_release() {
+    local target="$1"
+    local release_dir="$2"
+    local tool actual_version targets target_name
+
+    for tool in clang clang++ ld.lld lld llvm-ar llvm-config llvm-nm llvm-readobj; do
+        if ! resolve_release_tool "$release_dir" "$tool" >/dev/null; then
+            echo "Error: required tool $tool is missing from $release_dir/bin" >&2
+            return 1
+        fi
+    done
+
+    actual_version="$("$(resolve_release_tool "$release_dir" llvm-config)" --version)"
+    if [[ "$actual_version" != "$LLVM_VERSION_FROM_TAG"* ]]; then
+        echo "Error: llvm-config reports $actual_version, expected $LLVM_VERSION_FROM_TAG.x" >&2
+        return 1
+    fi
+    targets="$("$(resolve_release_tool "$release_dir" llvm-config)" --targets-built)"
+    for target_name in X86 ARM AArch64 AVR Mips RISCV WebAssembly Xtensa; do
+        if [[ " $targets " != *" $target_name "* ]]; then
+            echo "Error: required LLVM target $target_name is missing: $targets" >&2
+            return 1
+        fi
+    done
+    if [[ ! -f "$release_dir/include/llvm-c/Core.h" ]]; then
+        echo "Error: llvm-c/Core.h is missing" >&2
+        return 1
+    fi
+
+    if [[ "$target" == *-w64-mingw32 ]]; then
+        local readobj machine expected_machine input imports
+        readobj="$(resolve_release_tool "$release_dir" llvm-readobj)"
+        case "$target" in
+            i686-*) expected_machine=IMAGE_FILE_MACHINE_I386 ;;
+            x86_64-*) expected_machine=IMAGE_FILE_MACHINE_AMD64 ;;
+            aarch64-*) expected_machine=IMAGE_FILE_MACHINE_ARM64 ;;
+        esac
+        machine="$("$readobj" --file-headers "$(resolve_release_tool "$release_dir" clang)" | grep -o "$expected_machine" | head -n 1)"
+        if [[ "$machine" != "$expected_machine" ]]; then
+            echo "Error: clang is not a native $target executable" >&2
+            return 1
+        fi
+        for input in "$release_dir/bin/clang.exe" "$release_dir/bin/libLLVM-$LLVM_MAJOR.dll"; do
+            if [[ ! -f "$input" ]]; then
+                echo "Error: required Windows payload file is missing: $input" >&2
+                return 1
+            fi
+            imports="$("$readobj" --coff-imports "$input")"
+            if grep -Eiq '(^|[^[:alnum:]_])(msys-2\.0|cygwin1|libwinpthread[^[:space:]]*)\.dll([^[:alnum:]_]|$)' <<<"$imports"; then
+                echo "Error: $input has an unsupported POSIX-runtime dependency" >&2
+                return 1
+            fi
+        done
+        if [[ ! -f "$release_dir/$target/include/windows.h" ]]; then
+            echo "Error: the native MinGW/UCRT sysroot is missing windows.h" >&2
+            return 1
+        fi
+        for path in LICENSE.TXT LLVM-MINGW-LICENSE.TXT; do
+            if [[ ! -f "$release_dir/$path" ]]; then
+                echo "Error: required toolchain license is missing: $path" >&2
+                return 1
+            fi
+        done
+    fi
+
+    echo "Validated LLVM $actual_version payload with targets: $targets"
 }
 
 # Main build function (native builds only)
@@ -277,9 +440,13 @@ build_platform() {
     local cores=$(get_cpu_cores)
     echo "Using $cores CPU cores for build"
 
-    # Build only essential tools to significantly reduce build time
-    # LLGo currently only requires libLLVM.dylib for dynamic libraries, and this dylib will be built with the following targets
+    # Keep the established non-Windows target set unchanged. Windows release
+    # validation additionally needs llvm-readobj for PE architecture/import
+    # inspection.
     ninja -j"$cores" clang llvm-config llvm-ar llvm-nm lld
+    if [[ "$HOST_OS" == "Windows_NT" ]]; then
+        ninja -j"$cores" llvm-readobj
+    fi
 
     # Install
     echo "Installing $target..."
