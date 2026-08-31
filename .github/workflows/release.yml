@@ -52,7 +52,7 @@ jobs:
           upload="true"
         elif [ "${{ github.event_name }}" = "pull_request" ]; then
           # PR build - no release, use PR number
-          tag="19.1.2_20250225"
+          tag="19.1.2_20250905-4"
           upload="false"
         elif [ -n "${{ inputs.tag }}" ]; then
           # Manual trigger with tag
@@ -82,27 +82,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 build
-          - target: x86_64-linux-gnu
-            os: ubuntu-22.04
-            runner: ubuntu-22.04
-            container: ubuntu:20.04
-
-          # Linux ARM64 build
-          - target: aarch64-linux-gnu
-            os: ubuntu-22.04-arm
-            runner: ubuntu-22.04-arm
-            container: ubuntu:20.04
-
-          # macOS x86_64 build
-          - target: x86_64-apple-darwin
-            os: macos-13
-            runner: macos-13
-
-          # macOS ARM64 build
-          - target: aarch64-apple-darwin
-            os: macos-14
-            runner: macos-14
+          # Native Windows UCRT payloads. The x86 build runs under WoW64;
+          # each archive still contains architecture-native LLVM tools.
+          - target: x86_64-w64-mingw32
+            os: windows-2022
+            runner: windows-2022
+            bootstrap_arch: x86_64
+            bootstrap_sha256: 9395d95c089611e6cd728c9a07219ffc5ac706e0c719833a2f7e64a706a81541
+          - target: i686-w64-mingw32
+            os: windows-2022
+            runner: windows-2022
+            bootstrap_arch: i686
+            bootstrap_sha256: 18490aa24c9998c8811c7f5f53f9e6c7c05656ce734fe7e083e9f3ef69fb512c
+          - target: aarch64-w64-mingw32
+            os: windows-11-arm
+            runner: windows-11-arm
+            bootstrap_arch: aarch64
+            bootstrap_sha256: 2e00fa1b17f46aef58d7bbdac65c7ceec716f39bc59e0c424b03d4083648c9dd
 
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -151,6 +147,43 @@ jobs:
       run: |
         brew uninstall cmake || true
         brew install cmake ninja
+
+    - name: Install architecture-native Windows bootstrap
+      if: startsWith(matrix.os, 'windows-')
+      shell: pwsh
+      env:
+        LLVM_MINGW_VERSION: "20250114"
+        LLVM_MINGW_ARCH: ${{ matrix.bootstrap_arch }}
+        LLVM_MINGW_SHA256: ${{ matrix.bootstrap_sha256 }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $asset = "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-$env:LLVM_MINGW_ARCH.zip"
+        $archive = Join-Path $env:RUNNER_TEMP $asset
+        $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$asset"
+        & curl.exe --fail --location --retry 5 --retry-all-errors --output $archive $url
+        if ($LASTEXITCODE -ne 0) {
+          throw "Downloading $asset failed with exit code $LASTEXITCODE"
+        }
+        $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash
+        if (-not $actual.Equals($env:LLVM_MINGW_SHA256, [StringComparison]::OrdinalIgnoreCase)) {
+          throw "$asset SHA-256 is $actual, want $env:LLVM_MINGW_SHA256"
+        }
+        $extractRoot = Join-Path $env:RUNNER_TEMP "llvm-mingw-bootstrap"
+        Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot
+        $root = Get-ChildItem -LiteralPath $extractRoot -Directory |
+          Where-Object { Test-Path (Join-Path $_.FullName "bin\clang.exe") } |
+          Select-Object -First 1
+        if (-not $root) {
+          throw "$asset does not contain bin\clang.exe"
+        }
+        $reported = (& (Join-Path $root.FullName "bin\clang.exe") -dumpmachine).Trim()
+        if ($reported -notmatch '^${{ matrix.bootstrap_arch }}-.*-(windows-gnu|mingw32)$') {
+          throw "$asset reports unexpected target $reported"
+        }
+        Add-Content -Encoding utf8 $env:GITHUB_ENV "LLVM_MINGW_ROOT=$($root.FullName)"
+        Add-Content -Encoding utf8 $env:GITHUB_PATH (Join-Path $root.FullName "bin")
+        cmake --version
+        ninja --version
 
     - name: Build esp-clang package
       shell: bash
