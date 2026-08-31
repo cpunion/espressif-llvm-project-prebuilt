@@ -270,6 +270,27 @@ create_release_structure() {
             fi
             cp "$LLVM_MINGW_ROOT/bin/$dll" "$release_dir/bin/$dll"
         done
+        # The freshly built Clang resource directory has headers but no
+        # compiler-rt because Windows builds deliberately skip rebuilding the
+        # runtimes. Reuse the matching bootstrap builtins, and retain both the
+        # GNU and MSVC archive spellings: both are COFF archives, while the
+        # driver selects their conventional name from the target ABI.
+        local resource_dir="$release_dir/lib/clang/$LLVM_MAJOR/lib/windows"
+        mkdir -p "$resource_dir"
+        cp "$LLVM_MINGW_ROOT/lib/clang/$LLVM_MAJOR/lib/windows/"libclang_rt.builtins-*.a "$resource_dir/"
+        local builtins_arch
+        for builtins_arch in i386 x86_64 aarch64 arm; do
+            cp "$resource_dir/libclang_rt.builtins-$builtins_arch.a" \
+                "$resource_dir/clang_rt.builtins-$builtins_arch.lib"
+        done
+
+        # Keep the archive usable as a native GNU/MinGW toolchain rather than
+        # shipping a Clang driver with no CRT, Windows SDK imports, or libc++.
+        # Only the archive's native target sysroot is included; other Windows
+        # architectures receive their own independently built package.
+        cp -r "$LLVM_MINGW_ROOT/$target" "$release_dir/"
+        mkdir -p "$release_dir/include"
+        cp -r "$LLVM_MINGW_ROOT/include/c++" "$release_dir/include/"
         validate_release "$target" "$release_dir"
     fi
 
@@ -355,6 +376,10 @@ validate_release() {
                 return 1
             fi
         done
+        if [[ ! -f "$release_dir/$target/include/windows.h" ]]; then
+            echo "Error: the native MinGW/UCRT sysroot is missing windows.h" >&2
+            return 1
+        fi
     fi
 
     echo "Validated LLVM $actual_version payload with targets: $targets"
@@ -404,7 +429,7 @@ build_platform() {
 
     # Build only essential tools to significantly reduce build time
     # LLGo currently only requires libLLVM.dylib for dynamic libraries, and this dylib will be built with the following targets
-    ninja -j"$cores" clang llvm-config llvm-ar llvm-nm lld
+    ninja -j"$cores" clang llvm-config llvm-ar llvm-nm llvm-readobj lld
 
     # Install
     echo "Installing $target..."
