@@ -167,13 +167,14 @@ EOF
 # archive architecture while still using the UCRT and the normal Windows API;
 # no MSYS or Cygwin ABI is introduced.
 get_windows_cmake_args() {
-    cat << 'EOF'
--DCMAKE_C_COMPILER=clang
--DCMAKE_CXX_COMPILER=clang++
--DCMAKE_AR=llvm-ar
--DCMAKE_RANLIB=llvm-ranlib
--DCMAKE_RC_COMPILER=llvm-rc
--DCMAKE_STRIP=llvm-strip
+    local bootstrap_root="${LLVM_MINGW_ROOT//\\//}"
+    cat << EOF
+-DCMAKE_C_COMPILER=$bootstrap_root/bin/clang.exe
+-DCMAKE_CXX_COMPILER=$bootstrap_root/bin/clang++.exe
+-DCMAKE_AR=$bootstrap_root/bin/llvm-ar.exe
+-DCMAKE_RANLIB=$bootstrap_root/bin/llvm-ranlib.exe
+-DCMAKE_RC_COMPILER=$bootstrap_root/bin/llvm-rc.exe
+-DCMAKE_STRIP=$bootstrap_root/bin/llvm-strip.exe
 -DLLVM_BUILD_LLVM_DYLIB=ON
 -DLLVM_BUILD_LLVM_C_DYLIB=OFF
 -DLLVM_ENABLE_LIBCXX=ON
