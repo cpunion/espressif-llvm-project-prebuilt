@@ -13,7 +13,7 @@ index 791cc9a..f8f33e3 100644
 +    set(MINGW_HOST_TRIPLE x86_64-w64-mingw32)
 +endif()
 +if(LLVM_TOOLCHAIN_CROSS_BUILD_MINGW)
-+    if(NOT MINGW_HOST_TRIPLE MATCHES "^(x86_64|aarch64)-w64-mingw32$")
++    if(NOT MINGW_HOST_TRIPLE MATCHES "^(i686|x86_64|aarch64)-w64-mingw32$")
 +        message(FATAL_ERROR "Unsupported MinGW host: ${MINGW_HOST_TRIPLE}")
 +    endif()
 +    string(REGEX REPLACE "-.*" "" MINGW_SYSTEM_PROCESSOR "${MINGW_HOST_TRIPLE}")

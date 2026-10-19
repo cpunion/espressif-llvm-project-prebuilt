@@ -52,7 +52,7 @@ if [[ "$HOST_OS" == "Darwin" ]]; then
 fi
 
 # Supported toolchain hosts (Windows payloads are cross-built on Linux)
-VALID_TARGETS="aarch64-apple-darwin aarch64-linux-gnu x86_64-apple-darwin x86_64-linux-gnu x86_64-w64-mingw32 aarch64-w64-mingw32"
+VALID_TARGETS="aarch64-apple-darwin aarch64-linux-gnu x86_64-apple-darwin x86_64-linux-gnu i686-w64-mingw32 x86_64-w64-mingw32 aarch64-w64-mingw32"
 
 # Function to show usage
 show_usage() {
