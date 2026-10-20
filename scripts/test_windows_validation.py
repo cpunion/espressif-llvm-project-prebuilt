@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from validate_windows import MACHINES, validate
 
@@ -52,6 +53,30 @@ class WindowsPayloadTests(unittest.TestCase):
     def test_non_windows_runner(self):
         with self.assertRaisesRegex(ValueError, "native validation requires Windows"):
             validate(self.root, self.target, native=True)
+
+    def test_sdk_manifest_version(self):
+        manifest = self.root / "LLGO-LLVM-MANIFEST.txt"
+        with self.assertRaisesRegex(ValueError, "manifest llvm_version is None"):
+            validate(self.root, self.target, llvm_version="22.1.8")
+        manifest.write_text(f"host_target={self.target}\nllvm_version=22.1.4\n")
+        with self.assertRaisesRegex(ValueError, "expected 22.1.8"):
+            validate(self.root, self.target, llvm_version="22.1.8")
+        manifest.write_text(f"host_target={self.target}\nllvm_version=22.1.8\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            validate(self.root, self.target, llvm_version="22.1.8")
+
+    def test_i686_native_host(self):
+        target = "i686-w64-mingw32"
+        self.populate(target)
+        for host in ("X86", "AMD64"):
+            with self.subTest(host=host), mock.patch("validate_windows.os.name", "nt"), \
+                    mock.patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": host}, clear=True), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                validate(self.root, target, native=True)
+        with mock.patch("validate_windows.os.name", "nt"), \
+                mock.patch.dict("os.environ", {"PROCESSOR_ARCHITECTURE": "ARM64"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "requires Windows AMD64, X86, got nt/ARM64"):
+                validate(self.root, target, native=True)
 
 
 if __name__ == "__main__":

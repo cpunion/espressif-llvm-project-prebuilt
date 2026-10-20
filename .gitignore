@@ -1,5 +1,9 @@
 build/
 .ccache/
+.ccache-sdk/
+build-sdk/
+llvm-sdk-source/
+__pycache__/
 llvm-build-*/
 .vscode/
 dist/

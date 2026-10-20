@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import struct
 
-MACHINES = {"x86_64-w64-mingw32": 0x8664, "aarch64-w64-mingw32": 0xAA64}
+MACHINES = {"i686-w64-mingw32": 0x14C, "x86_64-w64-mingw32": 0x8664, "aarch64-w64-mingw32": 0xAA64}
 # Windows SDK import libraries used by LLVM and the bundled MinGW runtimes.
 SYSTEM_DLLS = {
     "advapi32.dll", "bcrypt.dll", "comdlg32.dll", "crypt32.dll", "dbghelp.dll",
@@ -29,8 +29,10 @@ def inspect_pe(path):
     optional_size, = unpack("<H", pe + 20)
     optional = pe + 24
     magic, = unpack("<H", optional)
-    if magic != 0x20B:
-        raise ValueError(f"{path}: expected PE32+ optional header")
+    expected_magic = 0x10B if machine == 0x14C else 0x20B
+    if magic != expected_magic:
+        raise ValueError(f"{path}: optional header does not match PE machine {machine:#x}")
+    directory_offset = 96 if magic == 0x10B else 112
     headers_size, = unpack("<I", optional + 60)
     sections = []
     for i in range(count):
@@ -47,11 +49,11 @@ def inspect_pe(path):
         start = offset(rva)
         return data[start:data.index(b"\0", start)].decode("ascii").lower()
     imports = set()
-    directories, = unpack("<I", optional + 108)
+    directories, = unpack("<I", optional + directory_offset - 4)
     for index, entry_size, name_offset in ((1, 20, 12), (13, 32, 4)):
         if index >= directories:
             continue
-        rva, size = unpack("<II", optional + 112 + index * 8)
+        rva, size = unpack("<II", optional + directory_offset + index * 8)
         if not rva:
             continue
         for pos in range(offset(rva), offset(rva) + size, entry_size):
@@ -64,18 +66,21 @@ def inspect_pe(path):
     return machine, imports
 
 
-def validate(root, target, native=False):
+def validate(root, target, native=False, llvm_version=None):
     expected = MACHINES[target]
     if native:
         # PROCESSOR_ARCHITEW6432 identifies the OS when invoked through x64 bash
         # or Python on Windows ARM64; interpreter bitness is not the host.
         host = os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE", "")
         wanted = "ARM64" if expected == 0xAA64 else "AMD64"
-        if os.name != "nt" or host.upper() != wanted:
-            raise ValueError(f"native validation requires Windows {wanted}, got {os.name}/{host}")
+        accepted = {"X86", "AMD64"} if expected == 0x14C else {wanted}
+        if os.name != "nt" or host.upper() not in accepted:
+            raise ValueError(f"native validation requires Windows {', '.join(sorted(accepted))}, got {os.name}/{host}")
     manifest = dict(line.split("=", 1) for line in (root / "LLGO-LLVM-MANIFEST.txt").read_text().splitlines() if "=" in line)
     if manifest.get("host_target") != target:
         raise ValueError(f"manifest host_target is not {target}")
+    if llvm_version is not None and manifest.get("llvm_version") != llvm_version:
+        raise ValueError(f"manifest llvm_version is {manifest.get('llvm_version')!r}, expected {llvm_version}")
     files = {p.name.lower(): p for p in (root / "bin").iterdir() if p.suffix.lower() in (".exe", ".dll")}
     if not files:
         raise ValueError("no Windows binaries found")
@@ -95,5 +100,6 @@ if __name__ == "__main__":
     parser.add_argument("root", type=Path)
     parser.add_argument("target", choices=MACHINES)
     parser.add_argument("--native", action="store_true")
+    parser.add_argument("--llvm-version", help="Expected development SDK manifest llvm_version")
     args = parser.parse_args()
-    validate(args.root, args.target, args.native)
+    validate(args.root, args.target, args.native, args.llvm_version)

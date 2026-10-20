@@ -142,6 +142,11 @@ jobs:
             os: ubuntu-22.04
             runner: ubuntu-22.04
 
+          # Actual PE32 host tools, executed under WoW64 in the validation job.
+          - target: i686-w64-mingw32
+            os: ubuntu-22.04
+            runner: ubuntu-22.04
+
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     env:
@@ -282,6 +287,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - target: i686-w64-mingw32
+            runner: windows-2022
           - target: x86_64-w64-mingw32
             runner: windows-2022
           - target: aarch64-w64-mingw32
