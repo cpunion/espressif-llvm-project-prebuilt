@@ -66,7 +66,7 @@ def inspect_pe(path):
     return machine, imports
 
 
-def validate(root, target, native=False):
+def validate(root, target, native=False, llvm_version=None):
     expected = MACHINES[target]
     if native:
         # PROCESSOR_ARCHITEW6432 identifies the OS when invoked through x64 bash
@@ -75,10 +75,12 @@ def validate(root, target, native=False):
         wanted = "ARM64" if expected == 0xAA64 else "AMD64"
         accepted = {"X86", "AMD64"} if expected == 0x14C else {wanted}
         if os.name != "nt" or host.upper() not in accepted:
-            raise ValueError(f"native validation requires Windows {wanted}, got {os.name}/{host}")
+            raise ValueError(f"native validation requires Windows {', '.join(sorted(accepted))}, got {os.name}/{host}")
     manifest = dict(line.split("=", 1) for line in (root / "LLGO-LLVM-MANIFEST.txt").read_text().splitlines() if "=" in line)
     if manifest.get("host_target") != target:
         raise ValueError(f"manifest host_target is not {target}")
+    if llvm_version is not None and manifest.get("llvm_version") != llvm_version:
+        raise ValueError(f"manifest llvm_version is {manifest.get('llvm_version')!r}, expected {llvm_version}")
     files = {p.name.lower(): p for p in (root / "bin").iterdir() if p.suffix.lower() in (".exe", ".dll")}
     if not files:
         raise ValueError("no Windows binaries found")
@@ -98,5 +100,6 @@ if __name__ == "__main__":
     parser.add_argument("root", type=Path)
     parser.add_argument("target", choices=MACHINES)
     parser.add_argument("--native", action="store_true")
+    parser.add_argument("--llvm-version", help="Expected development SDK manifest llvm_version")
     args = parser.parse_args()
-    validate(args.root, args.target, args.native)
+    validate(args.root, args.target, args.native, args.llvm_version)

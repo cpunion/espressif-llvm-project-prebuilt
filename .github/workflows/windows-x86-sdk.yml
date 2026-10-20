@@ -5,6 +5,7 @@ on:
       - 'scripts/build_windows_sdk.sh'
       - 'scripts/validate_windows.py'
       - 'scripts/test_windows_validation.py'
+      - 'scripts/test_windows_sdk.py'
       - 'scripts/windows_sdk_smoke.cpp'
       - 'toolchain.env'
       - '.github/workflows/windows-x86-sdk.yml'
@@ -13,6 +14,7 @@ on:
       - 'scripts/build_windows_sdk.sh'
       - 'scripts/validate_windows.py'
       - 'scripts/test_windows_validation.py'
+      - 'scripts/test_windows_sdk.py'
       - 'scripts/windows_sdk_smoke.cpp'
       - 'toolchain.env'
       - '.github/workflows/windows-x86-sdk.yml'
@@ -26,14 +28,31 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 240
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-sdk
+      CCACHE_MAXSIZE: 1G
+      CCACHE_COMPRESS: 'true'
+      CCACHE_COMPILERCHECK: content
+      REQUIRE_CCACHE: '1'
     steps:
       - uses: actions/checkout@v4
+      # Compiler outputs are reusable across validator/smoke-only changes.
+      # Keep this cache separate from the ESP executable-payload builds.
+      - name: Restore SDK compiler cache
+        id: sdk-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: llvm-sdk-ccache-v1-${{ runner.os }}-i686-${{ hashFiles('toolchain.env', 'scripts/build_windows_sdk.sh') }}
+          restore-keys: |
+            llvm-sdk-ccache-v1-${{ runner.os }}-i686-
       - name: Install dependencies and pinned bootstrap
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y ninja-build cmake
+          sudo apt-get install -y ninja-build cmake ccache
+          python3 scripts/test_windows_sdk.py
           source toolchain.env
           archive="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64.tar.xz"
           curl --fail -L --retry 3 -o "$RUNNER_TEMP/$archive" "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/$archive"
@@ -43,9 +62,21 @@ jobs:
           echo "$RUNNER_TEMP/bootstrap/bin" >> "$GITHUB_PATH"
           python3 scripts/test_windows_validation.py "$RUNNER_TEMP/bootstrap"
       - name: Build LLVM 22 Windows x86 SDK
+        id: sdk-build
         run: scripts/build_windows_sdk.sh
-        env:
-          LLVM_SDK_JOBS: '2'
+      - name: Show SDK compiler cache statistics
+        if: always()
+        run: |
+          if command -v ccache >/dev/null; then
+            ccache --show-stats
+            du -sh "$CCACHE_DIR" || true
+          fi
+      - name: Save SDK compiler cache
+        if: ${{ !cancelled() && steps.sdk-build.outcome != 'skipped' && steps.sdk-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: llvm-sdk-ccache-v1-${{ runner.os }}-i686-${{ hashFiles('toolchain.env', 'scripts/build_windows_sdk.sh') }}
       - uses: actions/upload-artifact@v4
         with:
           name: llvm-windows-x86-sdk
@@ -69,14 +100,15 @@ jobs:
         run: |
           set -euo pipefail
           source toolchain.env
+          echo "LLVM_WINDOWS_SDK_VERSION=$LLVM_WINDOWS_SDK_VERSION" >> "$GITHUB_ENV"
           cd artifacts
           sha256sum -c ./*.sha256
           tar -xf ./llvm-sdk-*.tar.xz
           archive="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-i686.zip"
           curl --fail -L --retry 3 -o bootstrap.zip "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/$archive"
-          printf '%s  %s\n' 'c68b26561883d5c7f33307aeb2b9b6c188eb705808b3f780dfce0be49f4e835d' bootstrap.zip | sha256sum -c -
+          printf '%s  %s\n' "$LLVM_MINGW_WINDOWS_I686_SHA256" bootstrap.zip | sha256sum -c -
           7z x -y bootstrap.zip -obootstrap > /dev/null
-          python ../scripts/validate_windows.py llvm-sdk i686-w64-mingw32 --native
+          python ../scripts/validate_windows.py llvm-sdk i686-w64-mingw32 --native --llvm-version "$LLVM_WINDOWS_SDK_VERSION"
       - name: Execute x86 LLVM and link its C and C++ APIs
         shell: pwsh
         run: |
@@ -84,7 +116,7 @@ jobs:
           $sdk = Join-Path $PWD 'artifacts/llvm-sdk'
           $bootstrap = (Get-ChildItem artifacts/bootstrap -Directory | Select-Object -First 1).FullName
           $env:PATH = "$sdk/bin;$bootstrap/bin;$env:PATH"
-          if ((& "$sdk/bin/llvm-config.exe" --version).Trim() -ne '22.1.8') { throw 'Wrong LLVM version' }
+          if ((& "$sdk/bin/llvm-config.exe" --version).Trim() -ne $env:LLVM_WINDOWS_SDK_VERSION) { throw 'Wrong LLVM version' }
           if ($LASTEXITCODE -ne 0) { throw 'The x86 LLVM executable failed' }
           $targets = & "$sdk/bin/llvm-config.exe" --targets-built
           foreach ($target in @('X86','ARM','AArch64','AVR','Mips','RISCV','WebAssembly')) {
