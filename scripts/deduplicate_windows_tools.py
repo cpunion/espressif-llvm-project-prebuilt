@@ -10,11 +10,16 @@ import uuid
 
 def duplicate_groups(root):
     by_size = {}
-    for path in sorted((root / "bin").iterdir()):
+    bin_dir = root / "bin"
+    if not bin_dir.is_dir():
+        raise ValueError(f"Windows tool directory not found: {bin_dir}")
+    for path in sorted(bin_dir.iterdir()):
         if path.is_symlink() or path.suffix.lower() != ".exe":
             continue
         info = path.stat()
         if stat.S_ISREG(info.st_mode):
+            # A hard link shares permissions too. Preserve differing install
+            # modes instead of silently changing metadata to save space.
             by_size.setdefault((info.st_size, stat.S_IMODE(info.st_mode)), []).append(path)
     for paths in by_size.values():
         if len(paths) < 2:
@@ -57,5 +62,5 @@ if __name__ == "__main__":
     parser.add_argument("--check", action="store_true", help="Require extracted duplicates to share file identity")
     args = parser.parse_args()
     count, saved = deduplicate(args.root, check=args.check)
-    print(f"Windows tool hard links verified" if args.check else
+    print("Windows tool hard links verified" if args.check else
           f"Deduplicated {count} tools; saved {saved / (1024 * 1024):.2f} MiB before compression")

@@ -59,7 +59,8 @@ class WindowsPackagingTests(unittest.TestCase):
     def test_archive_and_extraction_preserve_hard_links(self):
         self.pack()
         archive = self.parent / "tools.tar"
-        subprocess.run(["tar", "-cf", str(archive), "-C", str(self.parent), "esp-clang"], check=True)
+        subprocess.run(["tar", "-cf", str(archive), "-C", str(self.parent), "esp-clang"],
+                       env=dict(os.environ, COPYFILE_DISABLE="1"), check=True)
         with tarfile.open(archive) as stream:
             members = stream.getmembers()
             self.assertEqual(sum(member.islnk() for member in members), 6)
@@ -84,6 +85,16 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertEqual({p.name for p in self.bin.iterdir()}, set(self.tools))
         for name, contents in self.tools.items():
             self.assertEqual((self.bin / name).read_bytes(), contents)
+
+    @unittest.skipIf(os.name == "nt", "Windows does not expose POSIX executable permission bits")
+    def test_different_permissions_are_preserved(self):
+        alias = self.bin / "clang++.exe"
+        alias.chmod(0o600)
+        (self.bin / "clang.exe").chmod(0o755)
+        self.pack()
+        self.assertFalse(alias.samefile(self.bin / "clang.exe"))
+        self.assertEqual(alias.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.bin / "clang.exe").stat().st_mode & 0o777, 0o755)
 
     @unittest.skipIf(os.name == "nt", "Creating test symlinks needs Windows developer privileges")
     def test_symlinks_are_unchanged(self):

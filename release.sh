@@ -372,7 +372,10 @@ install_clang_driver_aliases() {
         if [[ -n "$exe_suffix" ]]; then
             # Hard links retain the executable name used for driver selection,
             # survive tar/NTFS extraction, and need no symlink privileges.
-            ln "$release_dir/bin/clang.exe" "$release_dir/bin/$alias.exe"
+            ln "$release_dir/bin/clang.exe" "$release_dir/bin/$alias.exe" || {
+                echo "Error: failed to hard-link $alias.exe to clang.exe in $release_dir/bin" >&2
+                return 1
+            }
         else
             ln -s clang "$release_dir/bin/$alias"
         fi
@@ -830,7 +833,7 @@ build_windows_platform() {
     local archive="$SCRIPT_DIR/dist/clang-esp-$VERSION_STRING-$target.tar.xz"
     # Use system tar explicitly to preserve hard links in the final archive,
     # keeping every tool name while storing identical contents only once.
-    tar -cJf "$archive" -C "$(dirname "$release_dir")" esp-clang/
+    COPYFILE_DISABLE=1 tar -cf - -C "$(dirname "$release_dir")" esp-clang/ | xz -T0 > "$archive"
     write_archive_checksum "$archive"
     echo "Windows cross-build completed: $archive"
 }
