@@ -354,6 +354,8 @@ jobs:
         name: "Espressif LLVM ${{ needs.prepare.outputs.tag }}"
         draft: false
         prerelease: false
+        # This maintenance payload must not replace the LLVM 23 Latest release.
+        make_latest: "false"
         files: |
           *.tar.xz
           *.sha256
