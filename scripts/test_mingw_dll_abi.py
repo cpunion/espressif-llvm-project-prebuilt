@@ -13,6 +13,7 @@ API = r'''
 #include "llvm/Support/Compiler.h"
 #include "llvm-c/Visibility.h"
 extern "C" LLVM_C_ABI int LLVMInitializeProbe();
+extern "C" LLVM_EXTERNAL_VISIBILITY int LLVMInitializeXtensaProbe();
 class LLVM_ABI SharedValue {
   int value;
 public:
@@ -37,6 +38,7 @@ LLVM_ABI SharedInterface *createSharedInterface();
 LIBRARY = r'''
 #include "api.h"
 extern "C" LLVM_C_ABI int LLVMInitializeProbe() { return 42; }
+extern "C" LLVM_EXTERNAL_VISIBILITY int LLVMInitializeXtensaProbe() { return 42; }
 int SharedValue::offset = 2;
 SharedValue::SharedValue(int v) : value(v + offset) {}
 int SharedValue::get() const { return value; }
@@ -49,6 +51,7 @@ public:
   int get() const override { return 42; }
 };
 SharedInterface *createSharedInterface() { return new Implementation; }
+int hiddenLLVMABIProbe() { return 19; }
 '''
 MAIN = r'''
 #include "api.h"
@@ -56,7 +59,8 @@ int main() {
   SharedInterface *p = createSharedInterface();
   int v = p->get();
   delete p;
-  return LLVMInitializeProbe() == 42 && SharedValue(40).get() == 42 &&
+  return LLVMInitializeProbe() == 42 && LLVMInitializeXtensaProbe() == 42 &&
+         SharedValue(40).get() == 42 &&
          SharedValue::offset == 2 && SharedBox<int>(42).get() == 42 && v == 42
              ? 0 : 1;
 }
@@ -81,13 +85,20 @@ def build(source, target, output):
         (root / "api.cpp").write_text(LIBRARY)
         (root / "main.cpp").write_text(MAIN)
         common = [compiler, "-Werror", "-fno-exceptions", "-fno-rtti",
-                  "-static-libstdc++", "-I" + str(root), "-I" + str(source / "llvm/include")]
+                  "-static-libstdc++", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-I" + str(root), "-I" + str(source / "llvm/include")]
         dll = output / "libLLVMABIProbe.dll"
         implib = root / "libLLVMABIProbe.dll.a"
         subprocess.run([*common, "-DLLVM_EXPORTS", "-shared", str(root / "api.cpp"),
                         "-o", str(dll), "-Wl,--out-implib," + str(implib)], check=True)
         executable = output / "probe.exe"
         subprocess.run([*common, str(root / "main.cpp"), str(implib), "-o", str(executable)], check=True)
+        readobj = shutil.which("llvm-readobj")
+        if not readobj:
+            raise ValueError("pinned MinGW llvm-readobj not found")
+        exports = subprocess.run([readobj, "--coff-exports", str(dll)], check=True,
+                                 capture_output=True, text=True).stdout
+        if "hiddenLLVMABIProbe" in exports or "LLVMInitializeProbe" not in exports:
+            raise ValueError("MinGW LLVM interface visibility did not hide internal symbols")
         machine, imports = inspect_pe(executable)
         if machine != MACHINES[target] or "libllvmabiprobe.dll" not in imports:
             raise ValueError(f"{target}: ABI probe did not import the expected DLL")
