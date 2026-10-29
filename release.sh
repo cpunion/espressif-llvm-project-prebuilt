@@ -586,9 +586,7 @@ EOF
                 -L"$release_dir/lib" "-Wl,-rpath,$release_dir/lib" \
                 "-lLLVM-$LLVM_EXPECTED_MAJOR" \
                 -o "$test_dir/llvm-c-runtime" ||
-           ! env \
-                DYLD_LIBRARY_PATH="$release_dir/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-                LD_LIBRARY_PATH="$release_dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+           ! env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u LD_LIBRARY_PATH \
                 "$test_dir/llvm-c-runtime"; then
             rm -rf "$test_dir"
             echo "Error: packaged LLVM C runtime ABI failed to compile, link, or run" >&2
@@ -603,13 +601,17 @@ int main() {
   return std::accumulate(values.begin(), values.end(), 0) == 42 ? 0 : 1;
 }
 EOF
+        # The executable has an explicit rpath. Globally overriding Darwin's
+        # system libc++ also redirects OS components to a different ABI and
+        # can break weak allocation symbols on older macOS releases.
         if ! "$release_dir/bin/clang++" -std=c++17 "$test_dir/cxx-runtime.cpp" \
                 -L"$release_dir/lib" "-Wl,-rpath,$release_dir/lib" \
                 -o "$test_dir/cxx-runtime" ||
-           ! env \
-                DYLD_LIBRARY_PATH="$release_dir/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-                LD_LIBRARY_PATH="$release_dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+           ! env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u LD_LIBRARY_PATH \
                 "$test_dir/cxx-runtime"; then
+            if [[ "$target" == *-apple-darwin && -f "$test_dir/cxx-runtime" ]]; then
+                otool -L "$test_dir/cxx-runtime" || true
+            fi
             rm -rf "$test_dir"
             echo "Error: packaged Clang C++ headers/runtime failed to compile, link, or run" >&2
             return 1
