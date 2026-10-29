@@ -280,6 +280,7 @@ jobs:
         path: |
           dist/*.tar.xz
           dist/*.sha256
+          dist/dll-abi-smoke/**
         # Shorter retention for PR builds, longer for releases
         retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
 
@@ -327,6 +328,9 @@ jobs:
         tar -xf "$archive" -C extracted
         python scripts/deduplicate_windows_tools.py "$PWD/extracted/esp-clang" --check
         ./release.sh --validate "$PWD/extracted/esp-clang" ${{ matrix.target }}
+        # Execute the probe against this payload's MinGW runtime DLLs, with
+        # its own DLL next to the executable. The probe is not shipped.
+        PATH="$PWD/extracted/esp-clang/bin:$PATH" ./artifacts/dll-abi-smoke/probe.exe
 
   release:
     name: Create Release

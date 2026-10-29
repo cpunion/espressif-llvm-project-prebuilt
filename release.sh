@@ -752,6 +752,9 @@ build_windows_platform() {
         return 1
     fi
     scripts_dir="$(download_build_scripts)"
+    # Catch MinGW C/C++ export and template ABI regressions before the full build.
+    python3 "$SCRIPT_DIR/scripts/test_mingw_dll_abi.py" "$LLVM_PROJECTDIR" "$target" \
+        "$SCRIPT_DIR/dist/dll-abi-smoke"
     while IFS= read -r arg; do
         ccache_args+=("$arg")
     done < <(get_ccache_cmake_args)

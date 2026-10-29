@@ -28,3 +28,8 @@ and cross-build validators check PE machine types, complete DLL dependencies,
 and actual LLVM DLL imports before running code-generation and LTO tests.
 Clang's own C++ library remains statically linked into its tools; this avoids
 requiring a second Clang DLL interface while still sharing the LLVM backends.
+
+Before the full build, a small DLL test uses the patched LLVM headers to link
+C API calls, C++ methods/static data, explicit template instantiations and a
+virtual factory/delete pair. Native Windows CI executes it with the payload's
+runtime DLLs. This test is an artifact for CI only, not part of the toolchain.
