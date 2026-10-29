@@ -21,3 +21,10 @@ The current payload is Espressif LLVM 22.1.4, built with the pinned LLVM 22
 llvm-mingw bootstrap. The separate Windows x86 host SDK stays on upstream LLVM
 22.1.8. LLVM 23 adoption is deferred while its upstream issue blocks LLGo;
 packaging changes must keep the LLVM 22 source and SDK contracts intact.
+
+Windows Clang, LLD and LLVM utilities share the packaged LLVM DLL. Explicit
+LLVM interface exports avoid exporting all internal MinGW symbols. The native
+and cross-build validators check PE machine types, complete DLL dependencies,
+and actual LLVM DLL imports before running code-generation and LTO tests.
+Clang's own C++ library remains statically linked into its tools; this avoids
+requiring a second Clang DLL interface while still sharing the LLVM backends.

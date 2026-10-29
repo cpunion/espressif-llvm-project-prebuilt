@@ -23,7 +23,7 @@ CCACHE_EXECUTABLE=""
 # The pinned Espressif build scripts omit opt from their default Toolchain
 # distribution. LLGo needs it for IR verification and pass-plugin smoke tests,
 # so keep the upstream component set and add opt to the packaged payload.
-WINDOWS_DISTRIBUTION_COMPONENTS="clang-format;clang-resource-headers;clang-tidy;clang;clangd;dsymutil;llc;lld;llvm-ar;llvm-config;llvm-cov;llvm-cxxfilt;llvm-dwarfdump;llvm-nm;llvm-objcopy;llvm-objdump;llvm-profdata;llvm-ranlib;llvm-readelf;llvm-readobj;llvm-size;llvm-strings;llvm-strip;llvm-symbolizer;LTO;opt"
+WINDOWS_DISTRIBUTION_COMPONENTS="LLVM;clang-format;clang-resource-headers;clang-tidy;clang;clangd;dsymutil;llc;lld;llvm-ar;llvm-config;llvm-cov;llvm-cxxfilt;llvm-dwarfdump;llvm-nm;llvm-objcopy;llvm-objdump;llvm-profdata;llvm-ranlib;llvm-readelf;llvm-readobj;llvm-size;llvm-strings;llvm-strip;llvm-symbolizer;LTO;opt"
 
 # Resolve source and build roots before changing into the per-platform build
 # directory. This keeps local qualification builds isolated from the checkout
@@ -405,6 +405,7 @@ windows_build_scripts_patches=$ESP_LLVM_BUILD_SCRIPTS_PATCHES
 windows_build_scripts_patch_sha256=$(for patch_path in $ESP_LLVM_BUILD_SCRIPTS_PATCHES; do cat "$SCRIPT_DIR/$patch_path"; done | shasum -a 256 | cut -d' ' -f1)
 windows_bootstrap=llvm-mingw-$LLVM_MINGW_VERSION
 windows_bootstrap_sha256=$LLVM_MINGW_LINUX_X86_64_SHA256
+windows_llvm_link_mode=shared
 EOF
     fi
 }
@@ -455,7 +456,7 @@ validate_release() {
     exe_suffix=""
     if [[ "$target" == *-w64-mingw32 ]]; then
         exe_suffix=".exe"
-        python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target" --native
+        python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target" --native --require-shared-llvm
     fi
 
     # Keep this list aligned with LLGo's actual embedded build, archive,
@@ -765,6 +766,7 @@ build_windows_platform() {
         -DLLVM_TOOLCHAIN_INCLUDE_GNU_BINUTILS=OFF \
         -DLLVM_TOOLCHAIN_ESPRESSIF=ON \
         -DLLVM_TOOLCHAIN_CROSS_BUILD_MINGW=ON \
+        -DLLVM_TOOLCHAIN_MINGW_SHARED_LLVM=ON \
         -DLLVM_TOOLCHAIN_HOST_TRIPLE="$target" \
         '-DLLVM_TOOLCHAIN_ENABLED_TARGETS=RISCV;Xtensa' \
         '-DLLVM_TARGETS_TO_BUILD=X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly' \
@@ -827,7 +829,7 @@ build_windows_platform() {
         return 1
     }
 
-    python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target"
+    python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target" --require-shared-llvm
 
     mkdir -p "$SCRIPT_DIR/dist"
     local archive="$SCRIPT_DIR/dist/clang-esp-$VERSION_STRING-$target.tar.xz"
