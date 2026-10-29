@@ -387,9 +387,9 @@ install_clang_driver_aliases() {
         xtensa-esp8266-elf-clang-as; do
         rm -f "$release_dir/bin/$alias$exe_suffix"
         if [[ -n "$exe_suffix" ]]; then
-            # CPack drops Windows symlinks. Regular PE aliases survive archive
-            # creation and native Windows extraction reliably.
-            cp "$release_dir/bin/clang.exe" "$release_dir/bin/$alias.exe"
+            # Hard links retain the executable name used for driver selection,
+            # survive tar/NTFS extraction, and need no symlink privileges.
+            ln "$release_dir/bin/clang.exe" "$release_dir/bin/$alias.exe"
         else
             ln -s clang "$release_dir/bin/$alias"
         fi
@@ -809,6 +809,8 @@ build_windows_platform() {
     write_payload_manifest "$release_dir" "$target"
     install_payload_licenses "$release_dir"
 
+    python3 "$SCRIPT_DIR/scripts/deduplicate_windows_tools.py" "$release_dir"
+
     # Cross-built PE executables cannot run on the Linux builder. Check the
     # complete archive on a native Windows runner before it can be released.
     for tool in \
@@ -841,16 +843,11 @@ build_windows_platform() {
 
     python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target"
 
-    cmake --build "$build_dir" --target repack-llvm-toolchain
-    local generated_archive
-    generated_archive="$(find "$build_dir" -maxdepth 1 -name "clang-esp-*-$target.tar.xz" -print -quit)"
-    if [[ -z "$generated_archive" ]]; then
-        echo "Error: Windows package archive was not generated" >&2
-        return 1
-    fi
     mkdir -p "$SCRIPT_DIR/dist"
     local archive="$SCRIPT_DIR/dist/clang-esp-$VERSION_STRING-$target.tar.xz"
-    cp "$generated_archive" "$archive"
+    # Use system tar explicitly to preserve hard links in the final archive,
+    # keeping every tool name while storing identical contents only once.
+    tar -cJf "$archive" -C "$(dirname "$release_dir")" esp-clang/
     write_archive_checksum "$archive"
     echo "Windows cross-build completed: $archive"
 }
