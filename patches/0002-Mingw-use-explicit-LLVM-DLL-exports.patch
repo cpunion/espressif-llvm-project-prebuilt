@@ -13,7 +13,7 @@ diff --git a/llvm/tools/llvm-shlib/CMakeLists.txt b/llvm/tools/llvm-shlib/CMakeL
 diff --git a/llvm/include/llvm/Support/Compiler.h b/llvm/include/llvm/Support/Compiler.h
 --- a/llvm/include/llvm/Support/Compiler.h
 +++ b/llvm/include/llvm/Support/Compiler.h
-@@ -183,7 +183,7 @@
+@@ -183,11 +183,18 @@
  // TODO(https://github.com/llvm/llvm-project/issues/145406): eliminate need for
  // two preprocessor definitions to gate LLVM_ABI macro definitions.
  #if defined(LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS) && !defined(LLVM_BUILD_STATIC)
@@ -21,4 +21,15 @@ diff --git a/llvm/include/llvm/Support/Compiler.h b/llvm/include/llvm/Support/Co
 +#if defined(_WIN32)
  #if defined(LLVM_EXPORTS)
  #define LLVM_ABI __declspec(dllexport)
++#if defined(__MINGW32__)
++// MinGW requires the export on the extern template declaration; applying
++// it only to the later explicit instantiation definition is ignored.
++#define LLVM_TEMPLATE_ABI __declspec(dllexport)
++#define LLVM_EXPORT_TEMPLATE
++#else
  #define LLVM_TEMPLATE_ABI
+ #define LLVM_EXPORT_TEMPLATE __declspec(dllexport)
++#endif
+ #else
+ #define LLVM_ABI __declspec(dllimport)
+ #define LLVM_TEMPLATE_ABI __declspec(dllimport)
