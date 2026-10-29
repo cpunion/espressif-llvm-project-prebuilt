@@ -7,7 +7,8 @@ launcher programs or symbolic links. Avoid repacking through formats or tools
 that flatten hard links, including ordinary ZIP archives.
 
 `scripts/deduplicate_windows_tools.py` checks contents before linking files.
-`release.sh` then creates the final `.tar.xz` with system tar. Native Windows CI
+`release.sh` then creates the final `.tar.xz` with system tar and multi-threaded
+xz compression. Extract it with tar or 7-Zip preserving hard links. Native Windows CI
 checks that extraction restores hard links before running the complete payload
 validation. Every tool, target, runtime, and license remains in the archive.
 
