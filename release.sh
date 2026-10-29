@@ -682,15 +682,19 @@ EOF
     # lld performs the LTO plugin work in-process. This proves that the
     # packaged Clang can emit LLVM bitcode and the packaged linker can load and
     # lower it for an Espressif target.
-    if ! "$release_dir/bin/clang$exe_suffix" --target=riscv32-esp-unknown-elf \
-            -mcpu=generic-rv32 -Werror -ffreestanding -flto -c \
-            "$test_dir/codegen.c" -o "$test_dir/esp32c3-lto.o" ||
-       ! "$release_dir/bin/ld.lld$exe_suffix" -r \
-            "$test_dir/esp32c3-lto.o" -o "$test_dir/esp32c3-lto-linked.o"; then
-        rm -rf "$test_dir"
-        echo "Error: ESP32-C3 LTO compile or plugin-backed link failed" >&2
-        return 1
-    fi
+    local lto_mode
+    for lto_mode in thin full; do
+        if ! "$release_dir/bin/clang$exe_suffix" --target=riscv32-esp-unknown-elf \
+                -mcpu=generic-rv32 -Werror -ffreestanding "-flto=$lto_mode" -c \
+                "$test_dir/codegen.c" -o "$test_dir/esp32c3-lto.o" ||
+           ! "$release_dir/bin/ld.lld$exe_suffix" -r \
+                "$test_dir/esp32c3-lto.o" -o "$test_dir/esp32c3-lto-linked.o" ||
+           [[ ! -s "$test_dir/esp32c3-lto-linked.o" ]]; then
+            rm -rf "$test_dir"
+            echo "Error: ESP32-C3 $lto_mode LTO compile or link failed" >&2
+            return 1
+        fi
+    done
     for object in \
         "$test_dir/esp32.o" "$test_dir/esp8266.o" "$test_dir/esp32c3.o" \
         "$test_dir/x86.o" "$test_dir/arm.o" "$test_dir/aarch64.o" \
