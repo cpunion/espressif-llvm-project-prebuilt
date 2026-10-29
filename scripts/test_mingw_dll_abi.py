@@ -52,6 +52,8 @@ public:
 };
 SharedInterface *createSharedInterface() { return new Implementation; }
 int hiddenLLVMABIProbe() { return 19; }
+// Mixed explicit/automatic exports must retain the normal LLVM interface.
+extern "C" __declspec(dllexport) int explicitRuntimeProbe() { return 7; }
 '''
 MAIN = r'''
 #include "api.h"
@@ -88,7 +90,7 @@ def build(source, target, output):
                   "-static-libstdc++", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-I" + str(root), "-I" + str(source / "llvm/include")]
         dll = output / "libLLVMABIProbe.dll"
         implib = root / "libLLVMABIProbe.dll.a"
-        subprocess.run([*common, "-DLLVM_EXPORTS", "-shared", str(root / "api.cpp"),
+        subprocess.run([*common, "-DLLVM_EXPORTS", "-shared", "-Wl,--export-all-symbols", str(root / "api.cpp"),
                         "-o", str(dll), "-Wl,--out-implib," + str(implib)], check=True)
         executable = output / "probe.exe"
         subprocess.run([*common, str(root / "main.cpp"), str(implib), "-o", str(executable)], check=True)

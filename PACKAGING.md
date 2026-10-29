@@ -24,7 +24,9 @@ packaging changes must keep the LLVM 22 source and SDK contracts intact.
 
 Windows Clang, LLD and LLVM utilities share the packaged LLVM DLL. LLVM's
 existing MinGW interface annotations and hidden default visibility restrict
-exports to its public interface; the linker must not force-export internal symbols. The native
+exports to its public interface. Keep the upstream `--export-all-symbols`
+linker option: explicit runtime exports otherwise suppress ordinary public
+exports. Hidden internal symbols remain excluded even with that option. The native
 and cross-build validators check PE machine types, complete DLL dependencies,
 and actual LLVM DLL imports before running code-generation and LTO tests.
 Clang's own C++ library remains statically linked into its tools; this avoids
