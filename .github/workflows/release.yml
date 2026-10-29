@@ -60,6 +60,9 @@ jobs:
     - name: Checkout payload contract
       uses: actions/checkout@v4
 
+    - name: Test Windows archive packaging
+      run: python3 scripts/test_windows_packaging.py
+
     - name: Determine tag and version
       id: vars
       run: |
@@ -322,6 +325,7 @@ jobs:
         test "$actual" = "$expected"
         mkdir extracted
         tar -xf "$archive" -C extracted
+        python scripts/deduplicate_windows_tools.py "$PWD/extracted/esp-clang" --check
         ./release.sh --validate "$PWD/extracted/esp-clang" ${{ matrix.target }}
 
   release:
