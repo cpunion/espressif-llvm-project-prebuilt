@@ -17,6 +17,7 @@ source contract fixed. Existing release assets and their checksums must remain
 unchanged. Consumers should update the payload version and SHA-256 together
 after the new assets have passed validation and been published.
 
-LLGo's LLVM 22 pins require a new **LLVM 22** payload revision. Backport this
-packaging change to the LLVM 22 build contract; the current main-branch LLVM 23
-payload is a separate compiler upgrade.
+The current payload is Espressif LLVM 22.1.4, built with the pinned LLVM 22
+llvm-mingw bootstrap. The separate Windows x86 host SDK stays on upstream LLVM
+22.1.8. LLVM 23 adoption is deferred while its upstream issue blocks LLGo;
+packaging changes must keep the LLVM 22 source and SDK contracts intact.
