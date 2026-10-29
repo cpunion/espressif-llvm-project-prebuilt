@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a small DLL with the patched LLVM C/C++ export headers before LLVM."""
+"""Check LLVM's MinGW export and C/C++ vtable ABI before the full build."""
 import argparse
 from pathlib import Path
 import shutil
@@ -34,6 +34,12 @@ public:
   virtual int get() const = 0;
 };
 LLVM_ABI SharedInterface *createSharedInterface();
+// Inline construction in a consumer requires the DLL-owned vtable itself.
+class LLVM_EXTERNAL_VISIBILITY SharedConcrete final : public SharedInterface {
+public:
+  SharedConcrete() = default;
+  LLVM_ABI int get() const override;
+};
 '''
 LIBRARY = r'''
 #include "api.h"
@@ -51,6 +57,7 @@ public:
   int get() const override { return 42; }
 };
 SharedInterface *createSharedInterface() { return new Implementation; }
+int SharedConcrete::get() const { return 42; }
 int hiddenLLVMABIProbe() { return 19; }
 // Mixed explicit/automatic exports must retain the normal LLVM interface.
 extern "C" __declspec(dllexport) int explicitRuntimeProbe() { return 7; }
@@ -58,12 +65,14 @@ extern "C" __declspec(dllexport) int explicitRuntimeProbe() { return 7; }
 MAIN = r'''
 #include "api.h"
 int main() {
+  SharedConcrete concrete;
   SharedInterface *p = createSharedInterface();
   int v = p->get();
   delete p;
   return LLVMInitializeProbe() == 42 && LLVMInitializeXtensaProbe() == 42 &&
          SharedValue(40).get() == 42 &&
-         SharedValue::offset == 2 && SharedBox<int>(42).get() == 42 && v == 42
+         SharedValue::offset == 2 && SharedBox<int>(42).get() == 42 && v == 42 &&
+         concrete.get() == 42
              ? 0 : 1;
 }
 '''
