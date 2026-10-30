@@ -40,11 +40,10 @@ on:
 permissions:
   contents: write
 
-# Finish expensive builds so even failed revisions save their compiler cache.
-# A newer revision waits for that cache instead of restarting cold.
+# Concurrency control to prevent multiple builds for the same PR/branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   prepare:
